@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 
-'use strict'
+require('babel/polyfill')
 
 var http = require('http')
 var url = require('url')
 var fs = require('fs')
-var open = require("open");
+var open = require("open")
 
 var webpack = require('webpack')
+var WebpackDevServer = require("webpack-dev-server")
+
 var React = require('react')
 
 
@@ -18,15 +20,16 @@ class ReactView{
     var componentName = process.argv[2]
     var fullPath = `${componentPath}/${componentName}`
 
-    this.port = process.argv[3] || 1337
+    this.port = process.argv[3] || 8880
     this.fullPath = fullPath
     this.bundle = `${__dirname}/component/bundle.js`
 
     this.compiler = webpack({
       context: __dirname,
-      entry: fullPath,
+      entry:  ['webpack/hot/dev-server', fullPath],
       output: {
-           path: __dirname + "/component",
+           path: `${__dirname}/component`,
+           publicPath: "http://localhost:9090/assets/",
            filename: "bundle.js"
       },
       module: {
@@ -48,54 +51,83 @@ class ReactView{
       },
       resolve: {
           extensions: ['', '.js', '.jsx']
-      }
+      },
+      plugins: [
+        new webpack.HotModuleReplacementPlugin(),
+        new webpack.NoErrorsPlugin()
+      ]
     })
 
     this.compile()
+      .then(() => {
+        this.serve()
+      })
 
   }
 
   compile(){
-    this.compiler.run(function(err, stats) {
-      if(err)
-          return console.log(err);
+
+    var promise = new Promise((resolve, reject) => {
       
-      var jsonStats = stats.toJson();
-      
-      if(jsonStats.errors.length > 0)
-         return console.log(jsonStats.errors);
-      
-      if(jsonStats.warnings.length > 0)
-         console.log(jsonStats.warnings);
+      this.compiler.watch({ // watch options:
+        aggregateTimeout: 300, // wait so long for more changes
+        poll: true // use polling instead of native watchers
+        // pass a number to set the polling interval
+      },
+      function(err, stats) {
+        if(err) {
+          console.log(err)
+          return reject()
+        }
         
-      this.serve()
-    }.bind(this));
+        var jsonStats = stats.toJson()
+        
+        if(jsonStats.errors.length > 0) {
+          console.log(jsonStats.errors)
+          return reject()
+        }
+
+        if(jsonStats.warnings.length > 0) {
+          console.log(jsonStats.warnings)
+          return reject()
+        }
+        console.log('Successfully Compiled')
+        return resolve(true)
+      })
+
+    })
+    return promise
   }
 
   serve(){
-    http.createServer(function (req, res) {
+  var server = new WebpackDevServer(this.compiler, {
+    // webpack-dev-server options
+    contentBase: `${__dirname}/component/`,
+    // or: contentBase: "http://localhost/",
 
-      var location = url.parse(req.url,true).pathname
+    hot: true,
+    publicPath: '/assets/',
+    // Enable special support for Hot Module Replacement
+    // Page is no longer updated, but a "webpackHotUpdate" message is send to the content
+    // Use "webpack/hot/dev-server" as additional module in your entry point
+    // Note: this does _not_ add the `HotModuleReplacementPlugin` like the CLI option does. 
 
-      if(location == '/bundle.js'){
-        fs.readFile(this.bundle, function(error, content) {
-          if (error) {
-            res.writeHead(500);
-            res.end();
-          }
-          else {
-            res.writeHead(200, { 'Content-Type': 'text/javascript' });
-            res.end(content, 'utf-8');
-          }
-        });
-      }
-      else {
-        res.writeHead(200, {'Content-Type': 'text/html; charset=UTF-8'});
-        res.end('<html><head><title>React View</title></head><body><script src="/bundle.js"></script></body></html>')
-      }
-    }.bind(this)).listen(this.port);
-    open('http://localhost:'+ this.port);
-    console.log('running!')
+    // Set this as true if you want to access dev server from arbitrary url.
+    // This is handy if you are using a html5 router.
+    historyApiFallback: false,
+
+    // Set this if you want webpack-dev-server to delegate a single path to an arbitrary server.
+    // Use "*" to proxy all paths to the specified server.
+    // This is useful if you want to get rid of 'http://localhost:8080/' in script[src],
+    // and has many other use cases (see https://github.com/webpack/webpack-dev-server/pull/127 ).
+    proxy: {
+      "*": "http://localhost:9090"
+    }
+  })
+
+  server.listen(this.port, "localhost", function() {});
+  open(`http://localhost:${this.port}/webpack-dev-server`);
+  console.log(`Server Started on port ${this.port}`)
   }
 }
 new ReactView()
